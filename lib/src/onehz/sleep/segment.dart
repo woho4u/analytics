@@ -43,6 +43,7 @@ import '../types.dart';
 import '../util.dart';
 import 'van_hees.dart';
 import 'accounting.dart' show SleepStage;
+import 'whoopsleep/whoopsleep.dart' show whoopSleepStages;
 import 'advanced_stager.dart';
 import 'band_offset.dart';
 
@@ -381,7 +382,8 @@ class SleepSegmentation {
 
   Map<String, dynamic> toJson() => {
         'window': window?.toJson(),
-        if (bandOffsetTrimSec != null) 'band_offset_trim_sec': bandOffsetTrimSec,
+        if (bandOffsetTrimSec != null)
+          'band_offset_trim_sec': bandOffsetTrimSec,
         'tst_sec': tstSec,
         'waso_sec': wasoSec,
         'in_bed_sec': inBedSec,
@@ -451,6 +453,14 @@ SleepSegmentation segmentSleep(
   /// of being published as a night that ended at the cut. See
   /// [kUnfinishedNightEdgeSec].
   bool recordContinues = false,
+
+  /// Stage the chosen window with the cracked-whoop five-head model
+  /// (`whoopsleep/`) instead of the rule-based stager. The window itself is
+  /// still found exactly as before; inside it the model labels every 30 s
+  /// epoch wake/light/deep/REM, so wake at either end of the window and all
+  /// totals derived below come from the model. Falls back to the rule-based
+  /// stages when the window has too few beat intervals for the model.
+  bool whoopSleep = false,
 }) {
   final n = math.min(accel.length, hr1hz.length);
   // A forced window (manual entry / user confirmation, Approach 1) is asserted
@@ -621,6 +631,25 @@ SleepSegmentation segmentSleep(
       final hi = math.min(inBed, seg.end - chosen.start);
       for (var i = lo; i < hi; i++) {
         stages4[i] = seg.stage;
+      }
+    }
+  }
+  if (whoopSleep) {
+    final ws = whoopSleepStages(
+      startSec: chosen.start,
+      endSec: chosen.end,
+      tsSec: tsSec,
+      x: [for (final a in trimmedAccel) a.x],
+      y: [for (final a in trimmedAccel) a.y],
+      z: [for (final a in trimmedAccel) a.z],
+      valid: [for (final a in trimmedAccel) a.valid],
+      hr: trimmedHr,
+      beatTsMs: rrTsMs,
+      beatRrMs: rrMs,
+    );
+    if (ws != null) {
+      for (var i = 0; i < inBed; i++) {
+        stages4[i] = ws[i];
       }
     }
   }
