@@ -24,6 +24,13 @@
 export 'van_hees.dart';
 export 'nap.dart';
 export 'segment.dart';
+export 'whoopsleep/whoopsleep.dart'
+    show
+        kWhoopSleepModelName,
+        whoopSleepActiveModelName,
+        useWhoopSleepModel,
+        whoopSleepSelfTest,
+        kWhoopSleepBlobFormat;
 export 'hr_fallback.dart';
 export 'advanced_stager.dart';
 export 'band_offset.dart';

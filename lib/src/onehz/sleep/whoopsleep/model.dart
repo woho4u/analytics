@@ -35,6 +35,9 @@ class _Blob {
     final hl = bd.getUint32(4, Endian.little);
     final header = jsonDecode(utf8.decode(bytes.sublist(8, 8 + hl)))
         as Map<String, dynamic>;
+    if (header['format'] != kWhoopSleepBlobFormat) {
+      throw FormatException('unsupported model format ${header['format']}');
+    }
     var base = 8 + hl;
     base += (8 - base % 8) % 8;
     return _Blob(header, bd, base);
@@ -408,6 +411,10 @@ class WsPrediction {
           }()
       ];
 }
+
+/// The blob layout and architecture this code runs. A model exported for a
+/// different architecture carries a different format and is refused.
+const String kWhoopSleepBlobFormat = 'whoopsleep-dart-1';
 
 class WhoopSleepModel {
   final String name;

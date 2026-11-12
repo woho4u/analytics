@@ -11,10 +11,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:openstrap_analytics/onehz.dart';
 import 'package:openstrap_analytics/src/onehz/sleep/whoopsleep/features.dart';
 import 'package:openstrap_analytics/src/onehz/sleep/whoopsleep/whoopsleep.dart';
+import 'package:openstrap_analytics/src/onehz/sleep/whoopsleep/whoopsleep_weights.g.dart';
 import 'package:test/test.dart';
 
 double _d(Object? v) => v == null ? double.nan : (v as num).toDouble();
@@ -106,5 +108,47 @@ void main() {
     // Totals are re-derived from the model's labels.
     expect(model.remSec, model.stages4.where((x) => x == 'rem').length);
     expect(model.deepSec, model.stages4.where((x) => x == 'deep').length);
+  });
+
+  test('a swapped-in model is used, and a broken one is refused', () {
+    final embedded = whoopSleepModel();
+    expect(whoopSleepActiveModelName(), kWhoopSleepModelName);
+    // Re-encode the embedded blob under a different name.
+    final bytes =
+        Uint8List.fromList(base64.decode(kWhoopSleepWeightsB64.join()));
+    final hlen = ByteData.sublistView(bytes, 4, 8).getUint32(0, Endian.little);
+    final header = utf8.decode(bytes.sublist(8, 8 + hlen));
+    final renamed = header.replaceFirst(
+        '"model":"${embedded.name}"', '"model":"${embedded.name}_x"');
+    expect(renamed, isNot(header), reason: 'header layout changed');
+    expect(renamed.length, header.length + 2);
+    final hb = utf8.encode(renamed);
+    // Keep the 8-byte data alignment: pad the header with spaces.
+    var pad = (8 - (8 + hb.length) % 8) % 8;
+    final origPad = (8 - (8 + hlen) % 8) % 8;
+    final hdr = [...hb, ...List.filled(pad, 0x20)];
+    final out = BytesBuilder()
+      ..add(bytes.sublist(0, 4))
+      ..add((ByteData(4)..setUint32(0, hdr.length, Endian.little))
+          .buffer
+          .asUint8List())
+      ..add(hdr)
+      ..add(bytes.sublist(8 + hlen + origPad));
+    final custom = out.toBytes();
+    expect(whoopSleepSelfTest(custom), isNull);
+    expect(useWhoopSleepModel(custom, key: 'a'), isNull);
+    expect(whoopSleepActiveModelName(), '${embedded.name}_x');
+    expect(identical(whoopSleepModel(), embedded), isFalse);
+    // Same key: no reload.
+    final again = whoopSleepModel();
+    expect(useWhoopSleepModel(custom, key: 'a'), isNull);
+    expect(identical(whoopSleepModel(), again), isTrue);
+    // A truncated blob is refused and the embedded model is back in use.
+    expect(useWhoopSleepModel(Uint8List.sublistView(custom, 0, 5000), key: 'b'),
+        isNotNull);
+    expect(identical(whoopSleepModel(), embedded), isTrue);
+    expect(whoopSleepSelfTest(Uint8List(16)), isNotNull);
+    expect(useWhoopSleepModel(null), isNull);
+    expect(whoopSleepActiveModelName(), kWhoopSleepModelName);
   });
 }
