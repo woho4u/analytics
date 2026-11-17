@@ -160,8 +160,9 @@ Metric<SessionRmssd> sleepSessionRmssdRsa(
     return Metric<SessionRmssd>.absent(
       tier: Tier.high,
       inputs_used: inputs,
-      note: 'the session holds more beat-time than elapsed time '
-          '(rr coverage ${cov.coverage.toStringAsFixed(2)})',
+      note: 'rr_overcount:coverage=${round6(cov.coverage)} — more beat-time '
+          'than elapsed time; the RR stream holds duplicated or interleaved '
+          'beats',
     );
   }
   final chain = chainBeats(s.rr, s.ts);
@@ -170,15 +171,27 @@ Metric<SessionRmssd> sleepSessionRmssdRsa(
   final nWin = ((endSec - startSec) + windowSec - 1) ~/ windowSec;
   final ssd = List<double>.filled(nWin, 0);
   final nd = List<int>.filled(nWin, 0);
+  // Runs of counted differences, for the jitter diagnostic (reported only).
+  final runs = <List<double>>[];
+  var run = <double>[];
   for (var i = 1; i < s.rr.length; i++) {
-    if (chain.missing[i] != 0 || !good[i] || !good[i - 1]) continue;
     final t = chain.tSec[i];
-    if (t < startSec || t >= endSec) continue;
+    if (chain.missing[i] != 0 ||
+        !good[i] ||
+        !good[i - 1] ||
+        t < startSec ||
+        t >= endSec) {
+      if (run.length >= 2) runs.add(run);
+      run = <double>[];
+      continue;
+    }
     final w = (t - startSec) ~/ windowSec;
     final d = s.rr[i] - s.rr[i - 1];
     ssd[w] += d * d;
     nd[w]++;
+    run.add(d);
   }
+  if (run.length >= 2) runs.add(run);
   final rmssds = <double>[];
   var thin = 0;
   for (var w = 0; w < nWin; w++) {
@@ -189,10 +202,11 @@ Metric<SessionRmssd> sleepSessionRmssdRsa(
     }
   }
   if (rmssds.isEmpty) {
-    return const Metric<SessionRmssd>.absent(
+    return Metric<SessionRmssd>.absent(
       tier: Tier.high,
       inputs_used: inputs,
-      note: 'no 5-min window with enough clean successive differences',
+      note: 'no valid 5-min windows for sleep-session RMSSD ($thin window(s) '
+          'had fewer than $minDiffsPerWindow clean successive differences)',
     );
   }
   return Metric<SessionRmssd>(
@@ -201,6 +215,7 @@ Metric<SessionRmssd> sleepSessionRmssdRsa(
       windows: rmssds.length,
       thinWindows: thin,
       minDiffsPerWindow: minDiffsPerWindow,
+      diffAcf1: nnDiffAcf1(runs),
       rrCoverage: cov?.coverage,
     ),
     confidence: (rmssds.length / 12.0).clamp(0.3, 0.95),
