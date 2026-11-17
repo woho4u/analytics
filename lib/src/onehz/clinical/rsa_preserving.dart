@@ -111,17 +111,19 @@ List<bool> _correctRrGood(List<double> rr, List<double> ts, double alpha) {
 
 /// The beats of [rrMs]/[rrTsMs] whose record stamp is inside [startSec,
 /// endSec), in input order.
-({List<double> rr, List<double> ts}) _inSession(
+({List<double> rr, List<double> ts, List<int> idx}) _inSession(
     List<double> rrMs, List<double> rrTsMs, int startSec, int endSec) {
   final rr = <double>[], ts = <double>[];
+  final idx = <int>[];
   for (var i = 0; i < rrMs.length; i++) {
     final t = rrTsMs[i];
     if (t >= startSec * 1000.0 && t < endSec * 1000.0) {
       rr.add(rrMs[i]);
       ts.add(t);
+      idx.add(i);
     }
   }
-  return (rr: rr, ts: ts);
+  return (rr: rr, ts: ts, idx: idx);
 }
 
 /// Nightly sleep HRV (RMSSD, ms) that keeps genuine breathing swings. Same
@@ -239,6 +241,7 @@ List<double> sleepRespEpochsLs(
   double nyqFrac = 0.95,
   int minBeats = 30,
   int smoothHalf = 5,
+  List<BeatClass>? beatClasses,
 }) {
   const epoch = 30;
   final e0 = startSec ~/ epoch, e1 = endSec ~/ epoch;
@@ -247,7 +250,13 @@ List<double> sleepRespEpochsLs(
   final s = _inSession(rrMs, rrTsMs, startSec, endSec);
   if (s.rr.length >= minBeats && nE > 0) {
     final chain = chainBeats(s.rr, s.ts);
-    final g1 = _correctRrGood(s.rr, s.ts, 5.2);
+    // [beatClasses]: correctRr (alpha 5.2) classes the caller already has for
+    // the whole input — correctRr is the slow step, so it is not run twice.
+    // The reference runs it on the session's beats only; the two differ only
+    // within ~45 beats of the session edges.
+    final g1 = beatClasses != null && beatClasses.length == rrMs.length
+        ? [for (final i in s.idx) beatClasses[i] == BeatClass.normal]
+        : _correctRrGood(s.rr, s.ts, 5.2);
     final g2 = malikGood(s.rr);
     final tt = <double>[], yy = <double>[];
     for (var i = 0; i < s.rr.length; i++) {
@@ -300,6 +309,7 @@ Metric<RespEstimate> sleepRespRateLs(
   List<double> rrTsMs, {
   required int startSec,
   required int endSec,
+  List<BeatClass>? beatClasses,
 }) {
   const inputs = ['rr_sleep_window'];
   if (startSec <= 0 || endSec <= startSec || rrMs.length != rrTsMs.length) {
@@ -308,7 +318,8 @@ Metric<RespEstimate> sleepRespRateLs(
         inputs_used: inputs,
         note: 'invalid or empty RR session window');
   }
-  final ep = sleepRespEpochsLs(rrMs, rrTsMs, startSec: startSec, endSec: endSec);
+  final ep = sleepRespEpochsLs(rrMs, rrTsMs,
+      startSec: startSec, endSec: endSec, beatClasses: beatClasses);
   final vals = [for (final v in ep) if (!v.isNaN) v];
   if (vals.length < 10) {
     return Metric<RespEstimate>.absent(
